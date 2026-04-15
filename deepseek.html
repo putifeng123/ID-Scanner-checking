@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Mantra ID Rapid Screening</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <!-- 使用国内备用CDN，避免加载失败 -->
+    <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.18.6/index.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #121212; color: white; padding: 20px; margin: 0; }
+        .container { max-width: 500px; margin: 0 auto; }
+        #inputBox { padding: 15px; width: 85%; font-size: 20px; border-radius: 8px; border: 2px solid #333; background: #1e1e1e; color: white; margin-top: 15px; text-align: center; }
+        #video-container { 
+            display: none; 
+            margin-top: 20px; 
+            width: 100%; 
+            border-radius: 12px; 
+            overflow: hidden; 
+            background: #000;
+            position: relative;
+        }
+        #video { width: 100%; height: auto; transform: scaleX(-1); } /* 前置镜像修正 */
+        .close-cam, .switch-cam { position: absolute; background: rgba(0,0,0,0.7); color: white; border: none; padding: 6px 12px; border-radius: 5px; cursor: pointer; }
+        .close-cam { top: 10px; right: 10px; background: rgba(255,0,0,0.7); }
+        .switch-cam { bottom: 10px; right: 10px; background: rgba(0,0,0,0.7); }
+        #result { margin-top: 20px; padding: 25px 15px; border-radius: 15px; background: #1e1e1e; min-height: 140px; transition: all 0.3s; }
+        #statusText { font-size: 48px; font-weight: bold; margin: 0; }
+        #idDisplay { font-size: 18px; margin-top: 12px; color: #aaa; font-family: monospace; }
+        .pass { color: #28a745; border: 5px solid #28a745; }
+        .fail { color: #dc3545; border: 5px solid #dc3545; }
+        .cam-btn { background: #007bff; color: white; border: none; padding: 12px 25px; border-radius: 8px; font-size: 16px; margin-top: 15px; cursor: pointer; width: 90%; }
+        .hint { color: #666; margin-top: 15px; font-size: 13px; }
+        .scanning-tip { background: #333; padding: 4px; border-radius: 20px; font-size: 12px; margin-top: 8px; display: inline-block; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>ID Rapid Screening (Mantra)</h2>
+    <input type="text" id="inputBox" placeholder="扫码枪或手动输入 ID" autofocus autocomplete="off">
+    <button id="toggleCam" class="cam-btn">📷 打开手机摄像头扫码</button>
+
+    <div id="video-container">
+        <video id="video" autoplay playsinline></video>
+        <button class="close-cam" onclick="stopCamera()">✖ 关闭</button>
+        <button id="switchCamBtn" class="switch-cam" style="display:none;">🔄 切换摄像头</button>
+    </div>
+    
+    <div id="result">
+        <p id="statusText">等待数据</p>
+        <div id="idDisplay"></div>
+    </div>
+    <p class="hint">判定阈值: 172A5CF1</p>
+</div>
+
+<script>
+    const threshold = parseInt("172A5CF1", 16);
+    const box = document.getElementById('inputBox');
+    const resDiv = document.getElementById('result');
+    const statusText = document.getElementById('statusText');
+    const idDisplay = document.getElementById('idDisplay');
+    const toggleCamBtn = document.getElementById('toggleCam');
+    const videoContainer = document.getElementById('video-container');
+    const video = document.getElementById('video');
+    const switchCamBtn = document.getElementById('switchCamBtn');
+
+    let currentStream = null;
+    let currentDeviceId = null;
+    let allDevices = [];
+
+    // --- 核心判定函数 ---
+    function processValue(valStr) {
+        if (!valStr) return;
+        const raw = valStr.trim();
+        const displayVal = raw.toUpperCase();
+        try {
+            // 去掉可能的 0x 或 0X 前缀
+            const hexStr = raw.replace(/^0x/i, '');
+            const val = parseInt(hexStr, 16);
+            if (isNaN(val)) {
+                statusText.innerText = "格式错误";
+                idDisplay.innerText = "无效的16进制";
+                resDiv.className = "";
+            } else {
+                idDisplay.innerText = "ID: " + (displayVal.startsWith("0X") ? displayVal : "0X" + displayVal);
+                if (val < threshold) {
+                    statusText.innerText = "PASS (合格)";
+                    resDiv.className = "pass";
+                } else {
+                    statusText.innerText = "FAIL (不合格)";
+                    resDiv.className = "fail";
+                }
+            }
+        } catch(err) {
+            statusText.innerText = "错误";
+        }
+        box.value = ""; 
+        box.focus();
+    }
+
+    // 手动输入
+    box.addEventListener('keyup', (e) => {
+        if (e.key === 'Enter') processValue(box.value.trim());
+    });
+
+    // 请求摄像头权限并启动扫码（使用原生 getUserMedia + ZXing 解码器）
+    async function startCamera() {
+        videoContainer.style.display = 'block';
+        toggleCamBtn.innerText = "⌛ 启动相机...";
+        toggleCamBtn.disabled = true;
+
+        try {
+            // 1. 获取所有视频设备
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            allDevices = devices.filter(d => d.kind === 'videoinput');
+            if (allDevices.length === 0) throw new Error('未找到摄像头设备');
+
+            // 2. 优先选择后置摄像头（通过 label 或默认选最后一个，通常后置 index 较大）
+            let selectedDevice = allDevices.find(d => 
+                d.label.toLowerCase().includes('back') || 
+                d.label.toLowerCase().includes('rear') ||
+                d.label.toLowerCase().includes('environment')
+            );
+            if (!selectedDevice) selectedDevice = allDevices[allDevices.length - 1]; // 默认选最后一个（常为后置）
+            currentDeviceId = selectedDevice.deviceId;
+
+            // 3. 获取视频流
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { deviceId: { exact: currentDeviceId } }
+            });
+            currentStream = stream;
+            video.srcObject = stream;
+            await video.play();
+
+            // 4. 初始化 ZXing 解码器（从视频元素中读取帧）
+            const codeReader = new ZXing.BrowserMultiFormatReader();
+            // 监听解码结果
+            codeReader.decodeFromVideoElement(video, (result, err) => {
+                if (result) {
+                    processValue(result.text);
+                    if (navigator.vibrate) navigator.vibrate(100);
+                    // 可选：扫码成功后自动停止相机（避免连续扫）
+                    // stopCamera();
+                }
+                if (err && !(err instanceof ZXing.NotFoundException)) {
+                    console.warn("解码错误:", err);
+                }
+            });
+
+            // 存储 reader 以便关闭
+            window.currentCodeReader = codeReader;
+
+            // 如果有多个摄像头，显示切换按钮
+            if (allDevices.length > 1) {
+                switchCamBtn.style.display = "block";
+                switchCamBtn.onclick = () => switchCamera();
+            } else {
+                switchCamBtn.style.display = "none";
+            }
+
+            toggleCamBtn.innerText = "📷 相机运行中 (点击关闭)";
+            toggleCamBtn.disabled = false;
+            // 添加扫描提示
+            showScanningTip(true);
+        } catch (err) {
+            console.error("摄像头启动失败:", err);
+            let errorMsg = "无法打开摄像头: ";
+            if (err.name === "NotAllowedError") errorMsg += "权限被拒绝，请允许使用相机。";
+            else if (err.name === "NotFoundError") errorMsg += "未检测到摄像头设备。";
+            else errorMsg += err.message;
+            alert(errorMsg);
+            stopCamera();
+            toggleCamBtn.disabled = false;
+        }
+    }
+
+    // 切换前后摄像头
+    async function switchCamera() {
+        if (!allDevices.length) return;
+        // 找到当前设备的下一个设备
+        const currentIndex = allDevices.findIndex(d => d.deviceId === currentDeviceId);
+        const nextIndex = (currentIndex + 1) % allDevices.length;
+        const newDeviceId = allDevices[nextIndex].deviceId;
+        if (newDeviceId === currentDeviceId) return;
+
+        // 停止当前流
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop());
+        }
+        if (window.currentCodeReader) {
+            window.currentCodeReader.reset();
+        }
+
+        try {
+            const newStream = await navigator.mediaDevices.getUserMedia({
+                video: { deviceId: { exact: newDeviceId } }
+            });
+            currentStream = newStream;
+            video.srcObject = newStream;
+            await video.play();
+            currentDeviceId = newDeviceId;
+
+            // 重新绑定解码器
+            const codeReader = new ZXing.BrowserMultiFormatReader();
+            codeReader.decodeFromVideoElement(video, (result, err) => {
+                if (result) processValue(result.text);
+            });
+            window.currentCodeReader = codeReader;
+        } catch (err) {
+            alert("切换摄像头失败: " + err.message);
+        }
+    }
+
+    function stopCamera() {
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop());
+            currentStream = null;
+        }
+        if (window.currentCodeReader) {
+            window.currentCodeReader.reset();
+            window.currentCodeReader = null;
+        }
+        video.srcObject = null;
+        videoContainer.style.display = 'none';
+        toggleCamBtn.innerText = "📷 打开手机摄像头扫码";
+        toggleCamBtn.disabled = false;
+        showScanningTip(false);
+        box.focus();
+    }
+
+    function showScanningTip(show) {
+        let tip = document.getElementById('scanTip');
+        if (show) {
+            if (!tip) {
+                tip = document.createElement('div');
+                tip.id = 'scanTip';
+                tip.className = 'scanning-tip';
+                tip.innerText = '🔍 扫描中，请将条码对准镜头';
+                videoContainer.appendChild(tip);
+            }
+            tip.style.display = 'block';
+        } else if (tip) {
+            tip.style.display = 'none';
+        }
+    }
+
+    // 按钮事件
+    toggleCamBtn.addEventListener('click', () => {
+        if (!currentStream) {
+            startCamera();
+        } else {
+            stopCamera();
+        }
+    });
+
+    // 确保页面通过 HTTPS 访问，否则给出警告
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && !location.hostname.startsWith('127.')) {
+        const warn = document.createElement('div');
+        warn.style.background = 'orange';
+        warn.style.color = 'black';
+        warn.style.padding = '10px';
+        warn.innerText = '⚠️ 当前未使用 HTTPS 访问，摄像头可能无法工作。请使用 HTTPS 或 localhost 测试。';
+        document.body.prepend(warn);
+    }
+
+    // 自动聚焦输入框
+    setInterval(() => {
+        if (!currentStream) box.focus();
+    }, 1000);
+</script>
+</body>
+</html>
