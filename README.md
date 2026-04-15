@@ -1,56 +1,45 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Mantra ID Rapid Screening</title>
+    <title>Mantra ID Screening</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
     
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/zxing-library/0.18.6/index.min.js" onerror="this.src='https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js'"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.18.6/umd/index.min.js"></script>
 
     <style>
         body { font-family: sans-serif; text-align: center; background: #121212; color: white; margin: 0; padding: 15px; }
         .container { max-width: 500px; margin: 0 auto; }
-        
-        /* 输入框 */
         #inputBox { padding: 15px; width: 85%; font-size: 20px; border-radius: 8px; border: 2px solid #333; background: #1e1e1e; color: white; margin: 15px 0; text-align: center; }
-        
-        /* 预览窗口 */
         #video-container { display: none; margin: 15px 0; width: 100%; border-radius: 12px; overflow: hidden; background: #000; position: relative; border: 2px solid #444; }
         #video { width: 100%; height: auto; display: block; }
-        .close-cam { position: absolute; top: 10px; right: 10px; background: rgba(255,0,0,0.8); color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; z-index: 10; }
-
-        /* 结果展示 */
-        #result { margin-top: 15px; padding: 25px 10px; border-radius: 15px; background: #1e1e1e; min-height: 120px; display: flex; flex-direction: column; justify-content: center; align-items: center; transition: all 0.2s; border: 4px solid #333; }
+        .close-cam { position: absolute; top: 10px; right: 10px; background: rgba(255,0,0,0.8); color: white; border: none; padding: 8px 12px; border-radius: 5px; }
+        #result { margin-top: 15px; padding: 25px 10px; border-radius: 15px; background: #1e1e1e; min-height: 120px; display: flex; flex-direction: column; justify-content: center; align-items: center; border: 4px solid #333; }
         #statusText { font-size: 42px; font-weight: bold; margin: 0; }
-        #idDisplay { font-size: 18px; margin-top: 10px; color: #888; font-family: monospace; }
-
+        #idDisplay { font-size: 18px; margin-top: 10px; color: #888; }
         .pass { color: #28a745; border-color: #28a745 !important; background: rgba(40,167,69,0.1) !important; }
         .fail { color: #dc3545; border-color: #dc3545 !important; background: rgba(220,53,69,0.1) !important; }
-        
         .cam-btn { background: #007bff; color: white; border: none; padding: 15px; border-radius: 8px; font-size: 16px; width: 90%; cursor: pointer; font-weight: bold; }
-        .hint { color: #555; margin-top: 20px; font-size: 12px; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h3 style="color:#888">Mantra ID Screening (v2.1)</h3>
+    <h3 style="color:#888">Mantra Screening (India Network Fix)</h3>
     
-    <input type="text" id="inputBox" placeholder="扫码枪或手动输入" autofocus autocomplete="off">
+    <input type="text" id="inputBox" placeholder="Scan or Type ID" autofocus autocomplete="off">
     
-    <button id="toggleCam" class="cam-btn">📷 开启手机相机扫码</button>
+    <button id="toggleCam" class="cam-btn">📷 Open Camera</button>
 
     <div id="video-container">
         <video id="video" playsinline></video>
-        <button class="close-cam" onclick="stopCamera()">关闭</button>
+        <button class="close-cam" onclick="stopCamera()">Close</button>
     </div>
     
     <div id="result">
         <p id="statusText">READY</p>
-        <div id="idDisplay">等待数据...</div>
+        <div id="idDisplay">Waiting...</div>
     </div>
-
-    <p class="hint">判定范围: 小于 172A5CF1</p>
 </div>
 
 <script>
@@ -65,14 +54,9 @@
     let codeReader = null;
     let isScanning = false;
 
-    // 初始化检查：确保 ZXing 已经加载
-    function checkZXing() {
-        if (typeof ZXing !== 'undefined') {
-            if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
-            return true;
-        }
-        alert("扫码组件加载失败，请刷新页面或检查网络链接 (cdnjs/unpkg)。");
-        return false;
+    // 检查库是否加载成功
+    function isLibLoaded() {
+        return typeof ZXing !== 'undefined';
     }
 
     function processValue(valStr) {
@@ -80,13 +64,12 @@
         const displayVal = valStr.toUpperCase();
         try {
             const val = parseInt(valStr.replace(/^0x/i, ''), 16);
-            idDisplay.innerText = "ID: " + (displayVal.startsWith("0X") ? displayVal : "0X" + displayVal);
-            
+            idDisplay.innerText = "ID: 0x" + displayVal.replace(/^0X/i, '');
             if (val < threshold) {
                 statusText.innerText = "PASS";
                 resDiv.className = "pass";
             } else {
-                statusText.innerText = "NG";
+                statusText.innerText = "FAIL";
                 resDiv.className = "fail";
             }
         } catch(err) {
@@ -100,23 +83,24 @@
     });
 
     toggleCamBtn.addEventListener('click', () => {
-        if (!isScanning) {
-            if (checkZXing()) startCamera();
-        } else {
-            stopCamera();
+        if (!isLibLoaded()) {
+            alert("Network Error: Cannot load scan components. Please try a different WiFi or mobile data (Airtel/Jio).");
+            return;
         }
+        if (!isScanning) startCamera(); else stopCamera();
     });
 
     async function startCamera() {
+        if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
         videoContainer.style.display = 'block';
-        toggleCamBtn.innerText = "⌛ 正在启动相机...";
+        toggleCamBtn.innerText = "⌛ Starting...";
         isScanning = true;
 
         try {
             const videoDevices = await codeReader.listVideoInputDevices();
             let selectedDeviceId = videoDevices[0].deviceId;
             
-            // 优先选择后置
+            // 自动匹配后置摄像头
             for (const device of videoDevices) {
                 if (device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('rear')) {
                     selectedDeviceId = device.deviceId;
@@ -130,10 +114,9 @@
                     if (navigator.vibrate) navigator.vibrate(100);
                 }
             });
-            toggleCamBtn.innerText = "📷 正在扫描 (点击关闭)";
+            toggleCamBtn.innerText = "📷 Scanning... (Tap to Close)";
         } catch (err) {
-            console.error(err);
-            alert("相机权限被拒绝或不可用。");
+            alert("Camera access denied.");
             stopCamera();
         }
     }
@@ -141,7 +124,7 @@
     function stopCamera() {
         if (codeReader) codeReader.reset();
         videoContainer.style.display = 'none';
-        toggleCamBtn.innerText = "📷 开启手机相机扫码";
+        toggleCamBtn.innerText = "📷 Open Camera";
         isScanning = false;
         box.focus();
     }
